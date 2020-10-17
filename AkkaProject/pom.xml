@@ -5,7 +5,7 @@
 
   <modelVersion>4.0.0</modelVersion>
   <artifactId>AkkaProject</artifactId>
-  <groupId>com.lightbend.akka.samples</groupId>
+  <groupId>SpaghettiCoders</groupId>
   <name>Distribute Key Value Store in Akka Java</name>
   <version>1.0</version>
 

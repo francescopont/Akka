@@ -15,7 +15,6 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 public class DataNode {
 
@@ -171,6 +170,7 @@ public class DataNode {
 
     private final HashMap<Integer, Request> requests = new HashMap<>();
     private final List<Command> toPerform = new ArrayList<>();
+    private final List<Letter> postOffice = new ArrayList<>();
 
 
     //non final actor attributes
@@ -239,7 +239,7 @@ public class DataNode {
         if(nodePosition < 0 ) nodePosition += nodes.size();
         nodes.sort(Comparator.comparing(NodeInfo::getHashKey));
         //checking whether the cluster is big enough
-        List<NodeInfo> successors = null;
+        List<NodeInfo> successors;
         try{
             successors = getSuccessorNodes(nodePosition, nReplicas, nodes);
         }catch (ClusterException e){
@@ -254,8 +254,7 @@ public class DataNode {
             //I return the value I've stored, even if null, and I specify if it's present in the answer message
             Value value = this.data.get(message.key);
             boolean isPresent = value != null;
-            message.replyTo
-                    .tell(new GetAnswer(message.key,isPresent? value.value : null , isPresent,ticket));
+            postOffice.add(new Letter(message.replyTo, new GetAnswer(message.key,isPresent? value.value : null , isPresent,ticket) ));
         }
         else {
             //I contact a random node which is supposed to keep a replica
@@ -263,13 +262,13 @@ public class DataNode {
             if (choice == nReplicas){
                 // I contact the leader
                 ActorRef<Command> leader = nodes.get(nodePosition).getNode();
-                leader.tell(new Get(message.key, context.getSelf(), ticket, choice));
+                postOffice.add(new Letter(leader,new Get(message.key, context.getSelf(), ticket, choice) ));
             }
             else{
-                successors
+                ActorRef<Command> destination = successors
                         .get(choice)
-                        .getNode()
-                        .tell(new Get(message.key, context.getSelf(), ticket,choice));
+                        .getNode();
+                postOffice.add(new Letter (destination, new Get(message.key, context.getSelf(), ticket,choice)));
             }
             requests.put(ticket, new Request(1, message.replyTo));
 
@@ -284,7 +283,7 @@ public class DataNode {
         if(nodePosition < 0 ) nodePosition += nodes.size();
         nodes.sort(Comparator.comparing(NodeInfo::getHashKey));
         //checking whether the cluster is big enough
-        List<NodeInfo> successors = null;
+        List<NodeInfo> successors;
         try{
             successors = getSuccessorNodes(nodePosition, nReplicas, nodes);
         }catch (ClusterException e){
@@ -297,21 +296,21 @@ public class DataNode {
                 .collect(Collectors.toList());
         if (message.successorID == nReplicas && nodePosition!= this.nodeId){
             ActorRef<Command> leader = nodes.get(nodePosition).getNode();
-            leader.tell(new Get(message.key, message.replyTo, message.requestId, message.successorID));
+            postOffice.add(new Letter(leader, new Get(message.key, message.replyTo, message.requestId, message.successorID)));
             return Behaviors.same();
         }
         if( !(successorsNames.get(message.successorID).equals(hashfunction(address,port)))) {
             // I redirect the request to the real destination
-            successors
+            ActorRef<Command> destination = successors
                     .get(message.successorID)
-                    .getNode()
-                    .tell(new Get(message.key, message.replyTo, message.requestId, message.successorID));
+                    .getNode();
+            postOffice.add(new Letter(destination, new Get(message.key, message.replyTo, message.requestId, message.successorID)));
             return Behaviors.same();
         }
         //if no changes, reply
         Value value = this.data.get(message.key);
         boolean isPresent = value != null;
-        message.replyTo.tell(new GetAnswer(message.key, isPresent? value.value : null, isPresent,message.requestId));
+        postOffice.add(new Letter(message.replyTo, new GetAnswer(message.key, isPresent? value.value : null, isPresent,message.requestId)));
         return Behaviors.same();
     }
 
@@ -319,8 +318,9 @@ public class DataNode {
         if (requests.containsKey(message.requestId)){
             Request request = requests.remove(message.requestId);
             request.setCounter(request.getCounter()-1);
-            if (request.getCounter() == 0) request.requester
-                    .tell(new GetAnswer(message.key, message.value,message.isPresent, message.requestId));
+            if (request.getCounter() == 0) {
+                postOffice.add(new Letter(request.requester, new GetAnswer(message.key, message.value,message.isPresent, message.requestId)));
+            }
             else{
                 requests.put(message.requestId, request);
             }
@@ -339,7 +339,7 @@ public class DataNode {
         if(nodePosition < 0 ) nodePosition += nodes.size();
         nodes.sort(Comparator.comparing(NodeInfo::getHashKey));
         //checking whether the cluster is big enough
-        List<NodeInfo> successors = null;
+        List<NodeInfo> successors;
         try{
             successors = getSuccessorNodes(nodePosition, nReplicas, nodes);
         }catch (ClusterException e){
@@ -375,7 +375,9 @@ public class DataNode {
         if (requests.containsKey(message.requestId)){
             Request request = requests.remove(message.requestId);
             request.setCounter(request.getCounter()-1);
-            if (request.getCounter() == 0) request.requester.tell(new PutAnswer(true, message.requestId));
+            if (request.getCounter() == 0){
+                postOffice.add( new Letter(request.requester,new PutAnswer(true, message.requestId) ));
+            }
             else{
                 requests.put(message.requestId, request);
             }
@@ -389,7 +391,7 @@ public class DataNode {
         if(nodePosition < 0 ) nodePosition += nodes.size();
         nodes.sort(Comparator.comparing(NodeInfo::getHashKey));
         //checking whether the cluster is big enough
-        List<NodeInfo> successors = null;
+        List<NodeInfo> successors;
         try{
             successors = getSuccessorNodes(nodePosition, nReplicas, nodes);
         }catch (ClusterException e){
@@ -501,37 +503,36 @@ public class DataNode {
         allData.putAll(this.replicas);
         this.data.clear();
         this.replicas.clear();
-        allData.entrySet()
-            .forEach(entry -> {
-                int nodePosition = entry.getKey().hashCode() % nodes.size();
-                if(nodePosition < 0 ) nodePosition += nodes.size();
-                nodes.sort(Comparator.comparing(NodeInfo::getHashKey));
-                //checking whether the cluster is big enough
-                List<NodeInfo> successors = null;
-                try{
-                    successors = getSuccessorNodes(nodePosition, nReplicas, nodes);
-                }catch (ClusterException e){
-                    //this exception is never thrown here due to if clause
-                }
-                if (nodePosition == this.nodeId){
-                    context.getLog().info("just inserted a leader version of key-data "+ entry.getKey() + " " + entry.getValue().value +  " due to new topology...");
-                    //I'm the leader, so I add the value to my data
-                    this.data.put(entry.getKey(),entry.getValue());
-                }else{
-                    //I send the data to the leader of that data
-                    context.getLog().info("sending an update to the leader of this data: I'm " + this.port + "..." );
-                    ActorRef<Command> node = nodes.get(nodePosition).getNode();
-                    node.tell(new Put(entry.getKey(), entry.getValue(), context.getSelf(), false, ticket, nReplicas));
+        allData.forEach((key, value) -> {
+            int nodePosition = key.hashCode() % nodes.size();
+            if (nodePosition < 0) nodePosition += nodes.size();
+            nodes.sort(Comparator.comparing(NodeInfo::getHashKey));
+            //checking whether the cluster is big enough
+            List<NodeInfo> successors = null;
+            try {
+                successors = getSuccessorNodes(nodePosition, nReplicas, nodes);
+            } catch (ClusterException e) {
+                //this exception is never thrown here due to if clause
+            }
+            if (nodePosition == this.nodeId) {
+                context.getLog().info("just inserted a leader version of key-data " + key + " " + value.value + " due to new topology...");
+                //I'm the leader, so I add the value to my data
+                this.data.put(key, value);
+            } else {
+                //I send the data to the leader of that data
+                context.getLog().info("sending an update to the leader of this data: I'm " + this.port + "...");
+                ActorRef<Command> node = nodes.get(nodePosition).getNode();
+                node.tell(new Put(key, value, context.getSelf(), false, ticket, nReplicas));
 
-                }
-                //optimizations are possible here
-                boolean isReplica = successors.stream().map(NodeInfo::getHashKey).collect(Collectors.toList()).contains(hashfunction(address,port));
-                if (isReplica) this.replicas.put(entry.getKey(), entry.getValue());
-                for ( int k=0; k<nReplicas; k++){
-                    successors.get(k).getNode().tell(new Put(entry.getKey(), entry.getValue(), context.getSelf(), true, ticket,k));
-                }
-                ticket++;
-            });
+            }
+            //optimizations are possible here -- I send the data to all successors
+            boolean isReplica = successors.stream().map(NodeInfo::getHashKey).collect(Collectors.toList()).contains(hashfunction(address, port));
+            if (isReplica) this.replicas.put(key, value);
+            for (int k = 0; k < nReplicas; k++) {
+                successors.get(k).getNode().tell(new Put(key, value, context.getSelf(), true, ticket, k));
+            }
+            ticket++;
+        });
         return Behaviors.same();
     }
 
@@ -609,17 +610,17 @@ public class DataNode {
      */
 
     private Behavior<Command> onGetAllLocalRequest(GetAllLocalRequest message){
-        Collection<String> allData = new ArrayList<>(this.data.values().stream().map(n -> n.value).collect(Collectors.toList()));
+        Collection<String> allData = this.data.values().stream().map(n -> n.value).collect(Collectors.toList());
         context.getLog().info(allData.size() + " number of leader data");
-        Collection<String> replicas = new ArrayList<>(this.replicas.values().stream().map(n -> n.value).collect(Collectors.toList()));
+        Collection<String> replicas = this.replicas.values().stream().map(n -> n.value).collect(Collectors.toList());
         context.getLog().info(replicas.size() + " number of replica data");
         allData.addAll(replicas);
-        message.replyTo.tell(new GetAllLocalAnswer(allData));
+        postOffice.add(new Letter(message.replyTo, new GetAllLocalAnswer(allData)));
         return Behaviors.same();
     }
 
     private Behavior<Command> onGetNodesRequest (GetNodesRequest message){
-        message.replyTo.tell(new GetNodesAnswer(this.nodes));
+        postOffice.add(new Letter(message.replyTo, new GetNodesAnswer(this.nodes)));
         return Behaviors.same();
     }
 }

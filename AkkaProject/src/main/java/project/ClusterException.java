@@ -1,4 +1,4 @@
 package project;
 
-public class ClusterException extends Exception{
+public class ClusterException extends Exception {
 }
