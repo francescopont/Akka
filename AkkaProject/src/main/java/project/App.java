@@ -37,11 +37,11 @@ public class App {
             Arrays.stream(args).map(Integer::parseInt).forEach(App::startup);
     }
 
-    private static Behavior<Void> rootBehavior(int nReplicas) {
+    private static Behavior<Void> rootBehavior(int nReplicas, int messageRate) {
         return Behaviors.setup(context -> {
             // Create an actor that handles cluster domain events
             context.spawn(ClusterListener.create(), "ClusterListener");
-            ActorRef<DataNode.Command> dataNode = context.spawn(DataNode.create(nReplicas), "DataNode");
+            ActorRef<DataNode.Command> dataNode = context.spawn(DataNode.create(nReplicas, messageRate), "DataNode");
             UserRoutes userRoutes = new UserRoutes(context.getSystem(), dataNode);
             TestRoutes testRoutes = new TestRoutes(context.getSystem(), dataNode);
             startHttpServer(concat(userRoutes.userRoutes(),testRoutes.testRoutes()), context.getSystem());
@@ -59,10 +59,11 @@ public class App {
                 .withFallback(ConfigFactory.load());
         Config conf = ConfigFactory.load();
         int nReplicas = conf.getInt("akka.replicas.n");
+        int messageRate = conf.getInt("akka.messageRate.n");
 
         App.port = port;
         // Create an Akka system
-        ActorSystem<Void> system = ActorSystem.create(rootBehavior(nReplicas), "ClusterSystem", config);
+        ActorSystem<Void> system = ActorSystem.create(rootBehavior(nReplicas, messageRate), "ClusterSystem", config);
     }
 
     private static void startHttpServer(Route route, ActorSystem<?> system) {
