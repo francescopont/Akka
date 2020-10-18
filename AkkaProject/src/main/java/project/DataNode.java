@@ -222,7 +222,7 @@ public class DataNode  {
         this.nodeId = 0;
         this.ticket = 1;
         this.timers = timers;
-        timers.startTimerWithFixedDelay(TIMER_KEY, Timeout.INSTANCE, Duration.ofMinutes(1));
+        timers.startTimerWithFixedDelay(TIMER_KEY, Timeout.INSTANCE, Duration.ofMillis(1000));
     }
 
     //behaviour constructor
