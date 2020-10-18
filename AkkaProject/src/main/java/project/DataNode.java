@@ -178,7 +178,7 @@ public class DataNode  {
     private final TimerScheduler<Command> timers;
 
     private final HashMap<Integer, Request> requests = new HashMap<>();
-    private final PostOffice postOffice = new PostOffice();
+    private final PostOffice postOffice = new PostOffice(20);
 
 
     //non final actor attributes

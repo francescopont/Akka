@@ -6,9 +6,20 @@ import java.util.List;
 public class PostOffice {
     private  LinkedList<DataNode.Command> incomingCommands = new LinkedList<>();
     private final LinkedList<Letter> outgoingLetters = new LinkedList<>();
+    private int stampsAmount;
+
+    public PostOffice(int stampsAmount){
+        this.stampsAmount = stampsAmount;
+    }
 
     public void send(Letter letter){
-        outgoingLetters.addLast(letter);
+        if (stampsAmount > 0){
+            letter.destination.tell(letter.message);
+            stampsAmount--;
+        }
+        else{
+            outgoingLetters.addLast(letter);
+        }
     }
 
     public void archive(DataNode.Command command){
@@ -22,12 +33,12 @@ public class PostOffice {
     }
 
     public void addStamps(int amount){
-        while ( amount > 0){
+        //trash expired stamps, if any
+        stampsAmount = amount;
+        while ( outgoingLetters.size() > 0 && stampsAmount > 0){
             Letter letter = outgoingLetters.pollFirst();
-            if (letter != null){
-                letter.destination.tell(letter.message);
-            }
-            amount--;
+            letter.destination.tell(letter.message);
+            stampsAmount--;
         }
     }
 
